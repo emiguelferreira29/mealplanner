@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react';
-import { ChefHat, ShoppingCart, Users, Wallet, Sparkles, Check, Utensils, AlertCircle, CalendarDays, Sunset, PartyPopper } from 'lucide-react';
+import {
+  ChefHat, ShoppingCart, Users, Wallet, Sparkles, Check,
+  Utensils, AlertCircle, CalendarDays, Sunset, PartyPopper,
+  Bookmark, Trash2, ArrowLeft
+} from 'lucide-react';
 
 const ELETRODOMESTICOS_LISTA = [
   'Fogão / Placa', 'Forno', 'Micro-ondas', 'Air Fryer',
@@ -13,6 +17,15 @@ const MENUS_APP = [
   { id: 'convidados', icon: PartyPopper, label: 'Convidados' }
 ];
 
+interface PlanoGuardado {
+  id: string;
+  data: string;
+  categoria: string;
+  pessoas: number;
+  plano: any;
+  ingredientesComprados: Record<string, boolean>;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('hoje');
   const [pessoas, setPessoas] = useState(4);
@@ -25,6 +38,10 @@ export default function App() {
   const [aCarregar, setACarregar] = useState(false);
   const [erro, setErro] = useState('');
 
+  // Estados para receitas guardadas
+  const [planosGuardados, setPlanosGuardados] = useState<PlanoGuardado[]>([]);
+  const [planoGuardadoAtivoId, setPlanoGuardadoAtivoId] = useState<string | null>(null);
+
   useEffect(() => {
     const guardados = localStorage.getItem('app_jantar_config_mobile');
     if (guardados) {
@@ -32,7 +49,18 @@ export default function App() {
       setPessoas(dados.pessoas || 4);
       setOrcamento(dados.orcamento || 80);
       setEletrodomesticos(dados.eletrodomesticos || ['Fogão / Placa']);
-      setActiveTab(dados.activeTab || 'hoje');
+      if (dados.activeTab && dados.activeTab !== 'guardadas') {
+        setActiveTab(dados.activeTab);
+      }
+    }
+
+    const receitasSalvas = localStorage.getItem('app_jantar_guardados');
+    if (receitasSalvas) {
+      try {
+        setPlanosGuardados(JSON.parse(receitasSalvas));
+      } catch (e) {
+        console.error('Erro ao ler receitas guardadas:', e);
+      }
     }
   }, []);
 
@@ -41,11 +69,19 @@ export default function App() {
     localStorage.setItem('app_jantar_config_mobile', JSON.stringify(dadosAtuais));
   };
 
+  const atualizarStorageGuardados = (novaLista: PlanoGuardado[]) => {
+    setPlanosGuardados(novaLista);
+    localStorage.setItem('app_jantar_guardados', JSON.stringify(novaLista));
+  };
+
   const mudarTab = (tabId: string) => {
     setActiveTab(tabId);
-    setPlano(null); 
+    setPlano(null);
+    setPlanoGuardadoAtivoId(null);
     setErro('');
-    guardarConfiguracoes({ activeTab: tabId });
+    if (tabId !== 'guardadas') {
+      guardarConfiguracoes({ activeTab: tabId });
+    }
   };
 
   const toggleEletrodomestico = (item: string) => {
@@ -67,10 +103,10 @@ export default function App() {
     setACarregar(true);
     setErro('');
     setPlano(null);
+    setPlanoGuardadoAtivoId(null);
     setIngredientesComprados({});
 
     try {
-      // 1. Descobrir automaticamente qual modelo de texto está ativo na conta Groq
       const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
         headers: { 'Authorization': `Bearer ${apiKey}` }
       });
@@ -95,7 +131,6 @@ export default function App() {
         chatModels.find((m: any) => m.id.includes('llama') || m.id.includes('qwen'))?.id ||
         chatModels[0].id;
 
-      // 2. Preparar o pedido das receitas
       let instrucoesRefeicao = "";
       let instrucoesOrcamento = "";
 
@@ -138,7 +173,6 @@ export default function App() {
         }
       `;
 
-      // 3. Gerar o plano com o modelo ativo encontrado
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -179,8 +213,61 @@ export default function App() {
     }
   };
 
+  const guardarReceitaAtual = () => {
+    if (!plano || planoGuardadoAtivoId) return;
+
+    const novoId = Date.now().toString();
+    const dataFormatada = new Date().toLocaleDateString('pt-PT', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const menuAtual = MENUS_APP.find(m => m.id === activeTab);
+
+    const novoRegisto: PlanoGuardado = {
+      id: novoId,
+      data: dataFormatada,
+      categoria: menuAtual?.label || 'Receita',
+      pessoas,
+      plano,
+      ingredientesComprados
+    };
+
+    atualizarStorageGuardados([novoRegisto, ...planosGuardados]);
+    setPlanoGuardadoAtivoId(novoId);
+  };
+
+  const abrirReceitaGuardada = (item: PlanoGuardado) => {
+    setPlano(item.plano);
+    setIngredientesComprados(item.ingredientesComprados || {});
+    setPlanoGuardadoAtivoId(item.id);
+    setErro('');
+  };
+
+  const apagarReceitaGuardada = (id: string) => {
+    const filtrada = planosGuardados.filter(item => item.id !== id);
+    atualizarStorageGuardados(filtrada);
+    if (planoGuardadoAtivoId === id) {
+      setPlano(null);
+      setPlanoGuardadoAtivoId(null);
+    }
+  };
+
   const toggleIngrediente = (idUnico: string) => {
-    setIngredientesComprados(prev => ({ ...prev, [idUnico]: !prev[idUnico] }));
+    const novosComprados = { ...ingredientesComprados, [idUnico]: !ingredientesComprados[idUnico] };
+    setIngredientesComprados(novosComprados);
+
+    // Se a receita estiver guardada, atualiza imediatamente o estado dos ingredientes no armazenamento
+    if (planoGuardadoAtivoId) {
+      const listaAtualizada = planosGuardados.map(item =>
+        item.id === planoGuardadoAtivoId
+          ? { ...item, ingredientesComprados: novosComprados }
+          : item
+      );
+      atualizarStorageGuardados(listaAtualizada);
+    }
   };
 
   const precisaOrcamento = activeTab === 'semana' || activeTab === 'convidados';
@@ -198,7 +285,7 @@ export default function App() {
           <h1 style={{ margin: '0', fontSize: '22px' }}>O Que Vai Ser o Jantar?</h1>
         </header>
 
-        {/* Navegação Mobile (Grelha 2x2) */}
+        {/* Navegação Mobile (Grelha 2x2 + Botão Guardadas) */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '24px' }}>
           {MENUS_APP.map(menu => {
             const isActive = activeTab === menu.id;
@@ -220,63 +307,148 @@ export default function App() {
               </button>
             );
           })}
-        </div>
 
-        {/* Área de Configuração */}
-        <div style={{ backgroundColor: '#1f2937', padding: '16px', borderRadius: '16px', marginBottom: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.2)' }}>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-            <div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: '#d1d5db' }}>
-                <Users size={16} color="#fbbf24" /> Pessoas
-              </label>
-              <input type="number" min="1" value={pessoas} onChange={(e) => { setPessoas(Number(e.target.value)); guardarConfiguracoes({ pessoas: Number(e.target.value) }); }}
-                style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #4b5563', backgroundColor: '#374151', color: 'white', fontSize: '16px', boxSizing: 'border-box' }} />
-            </div>
-
-            {precisaOrcamento && (
-              <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: '#d1d5db' }}>
-                  <Wallet size={16} color="#34d399" /> Orçamento (€)
-                </label>
-                <input type="number" min="5" step="5" value={orcamento} onChange={(e) => { setOrcamento(Number(e.target.value)); guardarConfiguracoes({ orcamento: Number(e.target.value) }); }}
-                  style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #4b5563', backgroundColor: '#374151', color: 'white', fontSize: '16px', boxSizing: 'border-box' }} />
-              </div>
-            )}
-          </div>
-
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#d1d5db' }}>Eletrodomésticos:</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-              {ELETRODOMESTICOS_LISTA.map((item) => {
-                const ativo = eletrodomesticos.includes(item);
-                return (
-                  <button key={item} onClick={() => toggleEletrodomestico(item)}
-                    style={{
-                      padding: '8px 12px', borderRadius: '20px', fontSize: '12px',
-                      border: ativo ? '1px solid #f59e0b' : '1px solid #4b5563',
-                      backgroundColor: ativo ? '#d97706' : '#374151', color: ativo ? 'white' : '#9ca3af',
-                      fontWeight: ativo ? '600' : '400'
-                    }}
-                  >
-                    {ativo ? '✓ ' : '+ '}{item}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#d1d5db' }}>Preferências (Opcional):</label>
-            <input type="text" placeholder="Ex: Quero gastar o bacalhau..." value={preferencia} onChange={(e) => setPreferencia(e.target.value)}
-              style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #4b5563', backgroundColor: '#374151', color: 'white', fontSize: '14px', boxSizing: 'border-box' }} />
-          </div>
-
-          <button onClick={gerarPlano} disabled={aCarregar}
-            style={{ width: '100%', padding: '16px', backgroundColor: aCarregar ? '#4b5563' : '#d97706', color: 'white', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: aCarregar ? 'not-allowed' : 'pointer' }}>
-            <Sparkles size={20} /> {aCarregar ? 'A cozinhar ideias...' : `Gerar ${menuAtivoInfo?.label}`}
+          <button
+            onClick={() => mudarTab('guardadas')}
+            style={{
+              gridColumn: '1 / -1',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              padding: '12px', borderRadius: '12px',
+              border: activeTab === 'guardadas' ? '1px solid #f59e0b' : '1px solid #374151',
+              backgroundColor: activeTab === 'guardadas' ? '#d97706' : '#1f2937',
+              color: activeTab === 'guardadas' ? '#fff' : '#e5e7eb',
+              cursor: 'pointer', transition: 'all 0.2s'
+            }}
+          >
+            <Bookmark size={18} />
+            <span style={{ fontSize: '13px', fontWeight: '600' }}>
+              Receitas Guardadas ({planosGuardados.length})
+            </span>
           </button>
         </div>
+
+        {/* Vista de Receitas Guardadas */}
+        {activeTab === 'guardadas' && !plano && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '24px' }}>
+            {planosGuardados.length === 0 ? (
+              <div style={{ backgroundColor: '#1f2937', padding: '28px 16px', borderRadius: '16px', textAlign: 'center', color: '#9ca3af' }}>
+                <Bookmark size={32} style={{ margin: '0 auto 10px auto', opacity: 0.5 }} />
+                <p style={{ margin: '0', fontSize: '14px' }}>Ainda não tens receitas guardadas.</p>
+                <p style={{ margin: '6px 0 0 0', fontSize: '12px' }}>Gera uma sugestão e clica em "Guardar Receita" para a consultar mais tarde.</p>
+              </div>
+            ) : (
+              planosGuardados.map(item => {
+                const tituloPrincipal = item.plano.receitas?.[0]?.nome || 'Plano de Refeições';
+                const extraReceitas = item.plano.receitas?.length > 1 ? ` (+${item.plano.receitas.length - 1})` : '';
+
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '14px',
+                      padding: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px'
+                    }}
+                  >
+                    <div
+                      onClick={() => abrirReceitaGuardada(item)}
+                      style={{ flex: 1, cursor: 'pointer' }}
+                    >
+                      <div style={{ fontSize: '11px', color: '#fbbf24', fontWeight: '600', marginBottom: '4px' }}>
+                        {item.categoria} • {item.data}
+                      </div>
+                      <div style={{ fontSize: '15px', fontWeight: '700', color: '#f9fafb', marginBottom: '4px' }}>
+                        {tituloPrincipal}{extraReceitas}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                        👥 {item.pessoas} pessoas • 💰 {Number(item.plano.custoTotalEstimado || 0).toFixed(2)}€
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        onClick={() => abrirReceitaGuardada(item)}
+                        style={{
+                          padding: '8px 12px', borderRadius: '8px', border: 'none',
+                          backgroundColor: '#d97706', color: 'white', fontSize: '12px', fontWeight: '600', cursor: 'pointer'
+                        }}
+                      >
+                        Abrir
+                      </button>
+                      <button
+                        onClick={() => apagarReceitaGuardada(item.id)}
+                        title="Apagar"
+                        style={{
+                          padding: '8px', borderRadius: '8px', border: '1px solid #4b5563',
+                          backgroundColor: '#374151', color: '#fca5a5', cursor: 'pointer', display: 'flex', alignItems: 'center'
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* Área de Configuração (escondida quando estamos na aba Guardadas) */}
+        {activeTab !== 'guardadas' && (
+          <div style={{ backgroundColor: '#1f2937', padding: '16px', borderRadius: '16px', marginBottom: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.2)' }}>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: '#d1d5db' }}>
+                  <Users size={16} color="#fbbf24" /> Pessoas
+                </label>
+                <input type="number" min="1" value={pessoas} onChange={(e) => { setPessoas(Number(e.target.value)); guardarConfiguracoes({ pessoas: Number(e.target.value) }); }}
+                  style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #4b5563', backgroundColor: '#374151', color: 'white', fontSize: '16px', boxSizing: 'border-box' }} />
+              </div>
+
+              {precisaOrcamento && (
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: '#d1d5db' }}>
+                    <Wallet size={16} color="#34d399" /> Orçamento (€)
+                  </label>
+                  <input type="number" min="5" step="5" value={orcamento} onChange={(e) => { setOrcamento(Number(e.target.value)); guardarConfiguracoes({ orcamento: Number(e.target.value) }); }}
+                    style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #4b5563', backgroundColor: '#374151', color: 'white', fontSize: '16px', boxSizing: 'border-box' }} />
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#d1d5db' }}>Eletrodomésticos:</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {ELETRODOMESTICOS_LISTA.map((item) => {
+                  const ativo = eletrodomesticos.includes(item);
+                  return (
+                    <button key={item} onClick={() => toggleEletrodomestico(item)}
+                      style={{
+                        padding: '8px 12px', borderRadius: '20px', fontSize: '12px',
+                        border: ativo ? '1px solid #f59e0b' : '1px solid #4b5563',
+                        backgroundColor: ativo ? '#d97706' : '#374151', color: ativo ? 'white' : '#9ca3af',
+                        fontWeight: ativo ? '600' : '400'
+                      }}
+                    >
+                      {ativo ? '✓ ' : '+ '}{item}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#d1d5db' }}>Preferências (Opcional):</label>
+              <input type="text" placeholder="Ex: Quero gastar o bacalhau..." value={preferencia} onChange={(e) => setPreferencia(e.target.value)}
+                style={{ width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #4b5563', backgroundColor: '#374151', color: 'white', fontSize: '14px', boxSizing: 'border-box' }} />
+            </div>
+
+            <button onClick={gerarPlano} disabled={aCarregar}
+              style={{ width: '100%', padding: '16px', backgroundColor: aCarregar ? '#4b5563' : '#d97706', color: 'white', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: aCarregar ? 'not-allowed' : 'pointer' }}>
+              <Sparkles size={20} /> {aCarregar ? 'A cozinhar ideias...' : `Gerar ${menuAtivoInfo?.label}`}
+            </button>
+          </div>
+        )}
 
         {erro && (
           <div style={{ padding: '12px', backgroundColor: '#7f1d1d', color: '#fca5a5', borderRadius: '10px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
@@ -284,17 +456,55 @@ export default function App() {
           </div>
         )}
 
-        {/* Resultados */}
+        {/* Resultados (Gerados agora ou abertos a partir das Guardadas) */}
         {plano && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             
+            {/* Barra de Ação: Voltar (se vier das guardadas) ou Guardar Receita */}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {activeTab === 'guardadas' && (
+                <button
+                  onClick={() => { setPlano(null); setPlanoGuardadoAtivoId(null); }}
+                  style={{
+                    padding: '12px 14px', borderRadius: '12px', border: '1px solid #4b5563',
+                    backgroundColor: '#1f2937', color: '#f9fafb', fontSize: '14px', fontWeight: '600',
+                    display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'
+                  }}
+                >
+                  <ArrowLeft size={18} /> Voltar à lista
+                </button>
+              )}
+
+              <button
+                onClick={guardarReceitaAtual}
+                disabled={Boolean(planoGuardadoAtivoId)}
+                style={{
+                  flex: 1, padding: '12px 16px', borderRadius: '12px', border: 'none',
+                  backgroundColor: planoGuardadoAtivoId ? '#065f46' : '#2563eb',
+                  color: 'white', fontSize: '14px', fontWeight: '700',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  cursor: planoGuardadoAtivoId ? 'default' : 'pointer'
+                }}
+              >
+                {planoGuardadoAtivoId ? (
+                  <>
+                    <Check size={18} /> Receita Guardada (Lista atualiza automaticamente)
+                  </>
+                ) : (
+                  <>
+                    <Bookmark size={18} /> Guardar Receita e Lista de Compras
+                  </>
+                )}
+              </button>
+            </div>
+
             {/* Mensagem do Chef */}
             <div style={{ backgroundColor: 'rgba(6, 78, 59, 0.3)', border: '1px solid #047857', padding: '16px', borderRadius: '12px', color: '#a7f3d0' }}>
               <p style={{ margin: '0 0 10px 0', fontStyle: 'italic', fontSize: '14px' }}>"{plano.mensagemChef}"</p>
               
-              {precisaOrcamento && (
+              {(precisaOrcamento || activeTab === 'guardadas') && (
                 <div style={{ display: 'inline-block', backgroundColor: '#047857', padding: '4px 10px', borderRadius: '8px', color: 'white', fontSize: '13px', fontWeight: '600', marginBottom: '8px' }}>
-                  Custo Est.: {plano.custoTotalEstimado.toFixed(2)}€
+                  Custo Est.: {Number(plano.custoTotalEstimado || 0).toFixed(2)}€
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', fontSize: '13px' }}>
@@ -313,7 +523,7 @@ export default function App() {
                   <h2 style={{ margin: '0 0 10px 0', fontSize: '20px', color: '#f9fafb', lineHeight: '1.2' }}>{receita.nome}</h2>
                   <div style={{ display: 'flex', gap: '15px', fontSize: '13px', color: '#9ca3af' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>⏱ {receita.tempo}</span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>💰 {receita.custoDaReceita.toFixed(2)}€</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>💰 {Number(receita.custoDaReceita || 0).toFixed(2)}€</span>
                   </div>
                 </div>
 
@@ -334,7 +544,7 @@ export default function App() {
                             </div>
                             <span style={{ fontSize: '14px', lineHeight: '1.3' }}>{ing.item}</span>
                           </div>
-                          <span style={{ fontSize: '13px', fontWeight: '600', color: comprado ? '#6b7280' : '#d1d5db' }}>{ing.precoEstimado.toFixed(2)}€</span>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: comprado ? '#6b7280' : '#d1d5db' }}>{Number(ing.precoEstimado || 0).toFixed(2)}€</span>
                         </li>
                       );
                     })}
