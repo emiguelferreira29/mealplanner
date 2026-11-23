@@ -1,9 +1,5 @@
 import { useState, useEffect } from 'react';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { ChefHat, ShoppingCart, Users, Wallet, Sparkles, Check, Utensils, AlertCircle, CalendarDays, Sunset, PartyPopper } from 'lucide-react';
-
-// Inicializa a IA usando a chave do ficheiro .env
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
 
 const ELETRODOMESTICOS_LISTA = [
   'Fogão / Placa', 'Forno', 'Micro-ondas', 'Air Fryer',
@@ -62,8 +58,10 @@ export default function App() {
   };
 
   const gerarPlano = async () => {
-    if (!import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY.includes('cole_aqui')) {
-      setErro('Aviso: Chave API não detetada. Verifique o ficheiro .env');
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+
+    if (!apiKey || apiKey.includes('cole_aqui')) {
+      setErro('Aviso: Chave API da OpenAI não detetada. Verifique o ficheiro .env ou o Vercel.');
       return;
     }
 
@@ -73,8 +71,6 @@ export default function App() {
     setIngredientesComprados({});
 
     try {
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' }); 
-      
       let instrucoesRefeicao = "";
       let instrucoesOrcamento = "";
 
@@ -99,7 +95,7 @@ export default function App() {
         - Eletrodomésticos: ${eletrodomesticos.join(', ')}.
         - Preferência: ${preferencia || 'Nenhuma'}.
 
-        Responde APENAS com um objeto JSON (sem formatação markdown) com esta estrutura exata:
+        Responde APENAS com um objeto JSON válido com esta estrutura exata:
         {
           "mensagemChef": "Frase animadora.",
           "dicaSupermercado": "Onde compensa comprar os ingredientes principais.",
@@ -117,12 +113,41 @@ export default function App() {
         }
       `;
 
-      const result = await model.generateContent(prompt);
-      const jsonLimpo = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content: 'És um chef de cozinha português prático e criativo. Respondes sempre em português de Portugal e apenas em formato JSON.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.7
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `Erro HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const conteudo = data.choices[0].message.content;
+      const jsonLimpo = conteudo.replace(/```json/g, '').replace(/```/g, '').trim();
       setPlano(JSON.parse(jsonLimpo));
     } catch (err: any) {
       console.error(err);
-      setErro(`Falha na comunicação com o Chef IA. Tente novamente.`);
+      setErro(`Erro do Chef IA: ${err.message || 'Falha na comunicação. Tente novamente.'}`);
     } finally {
       setACarregar(false);
     }
@@ -144,7 +169,7 @@ export default function App() {
           <div style={{ display: 'inline-flex', padding: '10px', backgroundColor: '#374151', borderRadius: '50%', color: '#fbbf24', marginBottom: '8px' }}>
             <ChefHat size={28} />
           </div>
-          <h1 style={{ margin: '0', fontSize: '22px' }}>O que vai ser a Janta?</h1>
+          <h1 style={{ margin: '0', fontSize: '22px' }}>O Que Vai Ser o Jantar?</h1>
         </header>
 
         {/* Navegação Mobile (Grelha 2x2) */}
@@ -229,7 +254,7 @@ export default function App() {
 
         {erro && (
           <div style={{ padding: '12px', backgroundColor: '#7f1d1d', color: '#fca5a5', borderRadius: '10px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
-            <AlertCircle size={18} /> {erro}
+            <AlertCircle size={18} style={{ flexShrink: 0 }} /> <span>{erro}</span>
           </div>
         )}
 
