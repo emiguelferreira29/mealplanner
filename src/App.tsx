@@ -41,6 +41,7 @@ export default function App() {
   // Estados para receitas guardadas
   const [planosGuardados, setPlanosGuardados] = useState<PlanoGuardado[]>([]);
   const [planoGuardadoAtivoId, setPlanoGuardadoAtivoId] = useState<string | null>(null);
+  const [receitasGuardadasMap, setReceitasGuardadasMap] = useState<Record<number, string>>({});
 
   useEffect(() => {
     const guardados = localStorage.getItem('app_jantar_config_mobile');
@@ -78,6 +79,7 @@ export default function App() {
     setActiveTab(tabId);
     setPlano(null);
     setPlanoGuardadoAtivoId(null);
+    setReceitasGuardadasMap({});
     setErro('');
     if (tabId !== 'guardadas') {
       guardarConfiguracoes({ activeTab: tabId });
@@ -92,6 +94,26 @@ export default function App() {
     guardarConfiguracoes({ eletrodomesticos: novaLista });
   };
 
+  const chamarModeloGemini = async (modeloPath: string, prompt: string, apiKey: string) => {
+    return fetch(
+      `https://generativelanguage.googleapis.com/v1beta/${modeloPath}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.7
+          }
+        })
+      }
+    );
+  };
+
   const gerarPlano = async () => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY?.trim();
 
@@ -104,85 +126,30 @@ export default function App() {
     setErro('');
     setPlano(null);
     setPlanoGuardadoAtivoId(null);
+    setReceitasGuardadasMap({});
     setIngredientesComprados({});
 
     try {
-      // 1. Listar e ordenar todos os modelos Gemini ativos por prioridade
-      let candidatosModelo = [
-        'models/gemini-2.5-flash',
-        'models/gemini-2.5-flash-lite',
-        'models/gemini-2.0-flash'
-      ];
-
-      const modelsRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
-        headers: { 'x-goog-api-key': apiKey }
-      });
-
-      if (modelsRes.ok) {
-        const modelsData = await modelsRes.json();
-        const validModels = (modelsData.models || []).filter((m: any) => {
-          const name = (m.name || '').toLowerCase();
-          const methods = m.supportedGenerationMethods || [];
-          return (
-            methods.includes('generateContent') &&
-            name.includes('gemini') &&
-            !name.includes('embedding') &&
-            !name.includes('vision') &&
-            !name.includes('image') &&
-            !name.includes('tts') &&
-            !name.includes('audio') &&
-            !name.includes('robotics') &&
-            !name.includes('computer')
-          );
-        });
-
-        if (validModels.length > 0) {
-          const regrasPrioridade = [
-            (n: string) => n.includes('2.5-flash') && !n.includes('lite') && !n.includes('preview'),
-            (n: string) => n.includes('2.5-flash-lite'),
-            (n: string) => n.includes('2.5-flash'),
-            (n: string) => n.includes('2.0-flash'),
-            (n: string) => n.includes('flash'),
-            (n: string) => n.includes('pro')
-          ];
-
-          const ordenados: string[] = [];
-          for (const regra of regrasPrioridade) {
-            for (const m of validModels) {
-              if (regra(m.name) && !ordenados.includes(m.name)) {
-                ordenados.push(m.name);
-              }
-            }
-          }
-          for (const m of validModels) {
-            if (!ordenados.includes(m.name)) {
-              ordenados.push(m.name);
-            }
-          }
-
-          candidatosModelo = ordenados;
-        }
-      } else if (modelsRes.status === 401 || modelsRes.status === 403) {
-        const errData = await modelsRes.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `Chave API rejeitada (${modelsRes.status}).`);
-      }
-
-      // 2. Preparar o pedido das receitas
       let instrucoesRefeicao = "";
       let instrucoesOrcamento = "";
+      let totalReceitas = 1;
 
       if (activeTab === 'hoje') {
-        instrucoesRefeicao = "UMA receita de jantar muito rápida e prática para desenrascar hoje.";
+        instrucoesRefeicao = "UMA ÚNICA receita de jantar muito rápida e prática para desenrascar hoje.";
         instrucoesOrcamento = "Económica, ingredientes comuns, sem limite rígido.";
+        totalReceitas = 1;
       } else if (activeTab === 'semana') {
-        instrucoesRefeicao = "CINCO receitas práticas para Segunda a Sexta-feira.";
+        instrucoesRefeicao = "CINCO receitas práticas e variadas para Segunda a Sexta-feira.";
         instrucoesOrcamento = `OBRIGATÓRIO: O custo total das 5 refeições não pode ultrapassar ${orcamento}€.`;
+        totalReceitas = 5;
       } else if (activeTab === 'fim_de_semana') {
-        instrucoesRefeicao = "TRÊS SUGESTÕES diferentes e elaboradas para escolher no fim de semana.";
-        instrucoesOrcamento = "Sem limite de orçamento. Foca-te no sabor e experiência.";
+        instrucoesRefeicao = "UMA ÚNICA receita especial de fim de semana ('fim de semana mood'), mais elaborada, reconfortante e saborosa para cozinhar sem pressas. NÃO cries 3 receitas nem um plano para vários dias — devolve apenas 1 receita.";
+        instrucoesOrcamento = "Sem limite rígido de orçamento. Foca-te no sabor, conforto e numa experiência gastronómica de fim de semana.";
+        totalReceitas = 1;
       } else if (activeTab === 'convidados') {
-        instrucoesRefeicao = "UMA receita SOFISTICADA para impressionar convidados.";
+        instrucoesRefeicao = "UMA ÚNICA receita SOFISTICADA para impressionar convidados.";
         instrucoesOrcamento = `Orçamento máximo para este jantar: ${orcamento}€. Boa apresentação.`;
+        totalReceitas = 1;
       }
 
       const prompt = `
@@ -192,6 +159,7 @@ export default function App() {
         - Regras de dinheiro: ${instrucoesOrcamento}
         - Eletrodomésticos: ${eletrodomesticos.join(', ')}.
         - Preferência: ${preferencia || 'Nenhuma'}.
+        - IMPORTANTE: O array "receitas" tem de conter exatamente ${totalReceitas} receita(s).
 
         Responde APENAS com um objeto JSON válido com esta estrutura exata:
         {
@@ -200,7 +168,7 @@ export default function App() {
           "custoTotalEstimado": 45.50,
           "receitas": [
             {
-              "contextoDia": "Ex: Segunda-feira ou Sugestão 1",
+              "contextoDia": "Ex: Segunda-feira ou Especial Fim de Semana",
               "nome": "Nome do Prato",
               "tempo": "30 min",
               "custoDaReceita": 8.50,
@@ -211,29 +179,18 @@ export default function App() {
         }
       `;
 
-      // 3. Tentar os modelos por ordem; se algum estiver sobrecarregado (503/429), passa ao próximo
+      // Tenta primeiro os modelos mais rápidos diretamente (evita pedidos extra)
+      const modelosRapidos = [
+        'models/gemini-2.5-flash',
+        'models/gemini-2.5-flash-lite',
+        'models/gemini-2.0-flash'
+      ];
+
       let data: any = null;
       let ultimoErro = '';
 
-      for (const modeloPath of candidatosModelo) {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/${modeloPath}:generateContent`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey
-            },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                responseMimeType: 'application/json',
-                temperature: 0.7
-              }
-            })
-          }
-        );
-
+      for (const modeloPath of modelosRapidos) {
+        const response = await chamarModeloGemini(modeloPath, prompt, apiKey);
         if (response.ok) {
           data = await response.json();
           break;
@@ -246,8 +203,43 @@ export default function App() {
         }
       }
 
+      // Se nenhum dos modelos rápidos respondeu (ex: atualização de nomes), descobre modelos ativos na conta
+      if (!data && !ultimoErro.toLowerCase().includes('api key')) {
+        const modelsRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+          headers: { 'x-goog-api-key': apiKey }
+        });
+
+        if (modelsRes.ok) {
+          const modelsData = await modelsRes.json();
+          const validModels = (modelsData.models || []).filter((m: any) => {
+            const name = (m.name || '').toLowerCase();
+            const methods = m.supportedGenerationMethods || [];
+            return (
+              methods.includes('generateContent') &&
+              name.includes('gemini') &&
+              !modelosRapidos.includes(m.name) &&
+              !name.includes('embedding') &&
+              !name.includes('vision') &&
+              !name.includes('image') &&
+              !name.includes('tts') &&
+              !name.includes('audio') &&
+              !name.includes('robotics') &&
+              !name.includes('computer')
+            );
+          });
+
+          for (const m of validModels) {
+            const response = await chamarModeloGemini(m.name, prompt, apiKey);
+            if (response.ok) {
+              data = await response.json();
+              break;
+            }
+          }
+        }
+      }
+
       if (!data) {
-        throw new Error(ultimoErro || 'Todos os modelos Gemini estão temporariamente ocupados. Tenta novamente dentro de segundos.');
+        throw new Error(ultimoErro || 'Os modelos Gemini estão temporariamente ocupados. Tenta novamente dentro de segundos.');
       }
 
       const conteudo = data.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -266,10 +258,10 @@ export default function App() {
     }
   };
 
-  const guardarReceitaAtual = () => {
-    if (!plano || planoGuardadoAtivoId) return;
+  const guardarReceitaIndividual = (receita: any, indexReceita: number) => {
+    if (!plano || receitasGuardadasMap[indexReceita] || planoGuardadoAtivoId) return;
 
-    const novoId = Date.now().toString();
+    const novoId = `${Date.now()}_${indexReceita}`;
     const dataFormatada = new Date().toLocaleDateString('pt-PT', {
       day: '2-digit',
       month: '2-digit',
@@ -279,23 +271,39 @@ export default function App() {
 
     const menuAtual = MENUS_APP.find(m => m.id === activeTab);
 
+    // Transfere apenas os ingredientes marcados desta receita específica
+    const ingredientesDestaReceita: Record<string, boolean> = {};
+    (receita.ingredientes || []).forEach((_: any, idx: number) => {
+      if (ingredientesComprados[`rec${indexReceita}_ing${idx}`]) {
+        ingredientesDestaReceita[`rec0_ing${idx}`] = true;
+      }
+    });
+
+    const planoIndividual = {
+      mensagemChef: plano.mensagemChef,
+      dicaSupermercado: plano.dicaSupermercado,
+      custoTotalEstimado: Number(receita.custoDaReceita || 0),
+      receitas: [receita]
+    };
+
     const novoRegisto: PlanoGuardado = {
       id: novoId,
       data: dataFormatada,
       categoria: menuAtual?.label || 'Receita',
       pessoas,
-      plano,
-      ingredientesComprados
+      plano: planoIndividual,
+      ingredientesComprados: ingredientesDestaReceita
     };
 
     atualizarStorageGuardados([novoRegisto, ...planosGuardados]);
-    setPlanoGuardadoAtivoId(novoId);
+    setReceitasGuardadasMap(prev => ({ ...prev, [indexReceita]: novoId }));
   };
 
   const abrirReceitaGuardada = (item: PlanoGuardado) => {
     setPlano(item.plano);
     setIngredientesComprados(item.ingredientesComprados || {});
     setPlanoGuardadoAtivoId(item.id);
+    setReceitasGuardadasMap({});
     setErro('');
   };
 
@@ -308,16 +316,30 @@ export default function App() {
     }
   };
 
-  const toggleIngrediente = (idUnico: string) => {
+  const toggleIngrediente = (indexReceita: number, idxIngrediente: number) => {
+    const idUnico = `rec${indexReceita}_ing${idxIngrediente}`;
     const novosComprados = { ...ingredientesComprados, [idUnico]: !ingredientesComprados[idUnico] };
     setIngredientesComprados(novosComprados);
 
-    if (planoGuardadoAtivoId) {
-      const listaAtualizada = planosGuardados.map(item =>
-        item.id === planoGuardadoAtivoId
-          ? { ...item, ingredientesComprados: novosComprados }
-          : item
-      );
+    // Sincroniza se estiver aberta a partir das Guardadas ou se já foi guardada individualmente nesta sessão
+    const idGuardado = planoGuardadoAtivoId || receitasGuardadasMap[indexReceita];
+    if (idGuardado) {
+      const listaAtualizada = planosGuardados.map(item => {
+        if (item.id !== idGuardado) return item;
+
+        if (planoGuardadoAtivoId) {
+          return { ...item, ingredientesComprados: novosComprados };
+        }
+
+        const chaveNormalizada = `rec0_ing${idxIngrediente}`;
+        return {
+          ...item,
+          ingredientesComprados: {
+            ...item.ingredientesComprados,
+            [chaveNormalizada]: novosComprados[idUnico]
+          }
+        };
+      });
       atualizarStorageGuardados(listaAtualizada);
     }
   };
@@ -334,7 +356,7 @@ export default function App() {
           <div style={{ display: 'inline-flex', padding: '10px', backgroundColor: '#374151', borderRadius: '50%', color: '#fbbf24', marginBottom: '8px' }}>
             <ChefHat size={28} />
           </div>
-          <h1 style={{ margin: '0', fontSize: '22px' }}>O Que Vai Ser o Jantar?</h1>
+          <h1 style={{ margin: '0', fontSize: '22px' }}>Ferreira? O que vai ser a Janta?</h1>
         </header>
 
         {/* Navegação Mobile (Grelha 2x2 + Botão Guardadas) */}
@@ -386,11 +408,11 @@ export default function App() {
               <div style={{ backgroundColor: '#1f2937', padding: '28px 16px', borderRadius: '16px', textAlign: 'center', color: '#9ca3af' }}>
                 <Bookmark size={32} style={{ margin: '0 auto 10px auto', opacity: 0.5 }} />
                 <p style={{ margin: '0', fontSize: '14px' }}>Ainda não tens receitas guardadas.</p>
-                <p style={{ margin: '6px 0 0 0', fontSize: '12px' }}>Gera uma sugestão e clica em "Guardar Receita" para a consultar mais tarde.</p>
+                <p style={{ margin: '6px 0 0 0', fontSize: '12px' }}>Gera uma sugestão e clica em "Guardar Receita" no cartão do prato que quiseres guardar.</p>
               </div>
             ) : (
               planosGuardados.map(item => {
-                const tituloPrincipal = item.plano.receitas?.[0]?.nome || 'Plano de Refeições';
+                const tituloPrincipal = item.plano.receitas?.[0]?.nome || 'Receita Guardada';
                 const extraReceitas = item.plano.receitas?.length > 1 ? ` (+${item.plano.receitas.length - 1})` : '';
 
                 return (
@@ -512,43 +534,21 @@ export default function App() {
         {plano && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             
-            {/* Barra de Ação: Voltar ou Guardar Receita */}
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {activeTab === 'guardadas' && (
+            {/* Botão Voltar (apenas quando estamos a ver uma receita guardada) */}
+            {activeTab === 'guardadas' && (
+              <div>
                 <button
                   onClick={() => { setPlano(null); setPlanoGuardadoAtivoId(null); }}
                   style={{
-                    padding: '12px 14px', borderRadius: '12px', border: '1px solid #4b5563',
+                    padding: '10px 14px', borderRadius: '12px', border: '1px solid #4b5563',
                     backgroundColor: '#1f2937', color: '#f9fafb', fontSize: '14px', fontWeight: '600',
-                    display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'
+                    display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer'
                   }}
                 >
-                  <ArrowLeft size={18} /> Voltar à lista
+                  <ArrowLeft size={18} /> Voltar às receitas guardadas
                 </button>
-              )}
-
-              <button
-                onClick={guardarReceitaAtual}
-                disabled={Boolean(planoGuardadoAtivoId)}
-                style={{
-                  flex: 1, padding: '12px 16px', borderRadius: '12px', border: 'none',
-                  backgroundColor: planoGuardadoAtivoId ? '#065f46' : '#2563eb',
-                  color: 'white', fontSize: '14px', fontWeight: '700',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  cursor: planoGuardadoAtivoId ? 'default' : 'pointer'
-                }}
-              >
-                {planoGuardadoAtivoId ? (
-                  <>
-                    <Check size={18} /> Receita Guardada (Lista atualiza automaticamente)
-                  </>
-                ) : (
-                  <>
-                    <Bookmark size={18} /> Guardar Receita e Lista de Compras
-                  </>
-                )}
-              </button>
-            </div>
+              </div>
+            )}
 
             {/* Mensagem do Chef */}
             <div style={{ backgroundColor: 'rgba(6, 78, 59, 0.3)', border: '1px solid #047857', padding: '16px', borderRadius: '12px', color: '#a7f3d0' }}>
@@ -564,55 +564,84 @@ export default function App() {
               </div>
             </div>
 
-            {/* Cartões das Receitas */}
-            {plano.receitas.map((receita: any, indexReceita: number) => (
-              <div key={indexReceita} style={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '16px', overflow: 'hidden' }}>
-                
-                <div style={{ backgroundColor: '#111827', padding: '16px', borderBottom: '1px solid #374151' }}>
-                  <div style={{ fontSize: '11px', textTransform: 'uppercase', color: '#f59e0b', marginBottom: '6px', fontWeight: 'bold' }}>
-                    {receita.contextoDia}
-                  </div>
-                  <h2 style={{ margin: '0 0 10px 0', fontSize: '20px', color: '#f9fafb', lineHeight: '1.2' }}>{receita.nome}</h2>
-                  <div style={{ display: 'flex', gap: '15px', fontSize: '13px', color: '#9ca3af' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>⏱ {receita.tempo}</span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>💰 {Number(receita.custoDaReceita || 0).toFixed(2)}€</span>
-                  </div>
-                </div>
+            {/* Cartões das Receitas (cada um com o seu botão Guardar individual) */}
+            {plano.receitas.map((receita: any, indexReceita: number) => {
+              const jaGuardada = Boolean(planoGuardadoAtivoId || receitasGuardadasMap[indexReceita]);
 
-                <div style={{ padding: '16px' }}>
-                  <h3 style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '15px', color: '#f3f4f6', margin: '0 0 12px 0' }}>
-                    <ShoppingCart size={16} color="#fbbf24" /> Ingredientes
-                  </h3>
-                  <ul style={{ listStyle: 'none', padding: '0', margin: '0 0 20px 0' }}>
-                    {receita.ingredientes.map((ing: any, idx: number) => {
-                      const idUnico = `rec${indexReceita}_ing${idx}`;
-                      const comprado = ingredientesComprados[idUnico];
-                      return (
-                        <li key={idx} onClick={() => toggleIngrediente(idUnico)}
-                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #374151', cursor: 'pointer' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: comprado ? '#6b7280' : '#d1d5db', textDecoration: comprado ? 'line-through' : 'none' }}>
-                            <div style={{ width: '22px', height: '22px', borderRadius: '6px', border: comprado ? 'none' : '2px solid #4b5563', backgroundColor: comprado ? '#10b981' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', flexShrink: 0 }}>
-                              {comprado && <Check size={14} />}
+              return (
+                <div key={indexReceita} style={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '16px', overflow: 'hidden' }}>
+                  
+                  <div style={{ backgroundColor: '#111827', padding: '16px', borderBottom: '1px solid #374151' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#f59e0b', fontWeight: 'bold' }}>
+                        {receita.contextoDia}
+                      </span>
+
+                      <button
+                        onClick={() => guardarReceitaIndividual(receita, indexReceita)}
+                        disabled={jaGuardada}
+                        style={{
+                          padding: '6px 12px', borderRadius: '8px', border: 'none',
+                          backgroundColor: jaGuardada ? '#065f46' : '#2563eb',
+                          color: 'white', fontSize: '12px', fontWeight: '600',
+                          display: 'inline-flex', alignItems: 'center', gap: '5px',
+                          cursor: jaGuardada ? 'default' : 'pointer'
+                        }}
+                      >
+                        {jaGuardada ? (
+                          <>
+                            <Check size={14} /> Guardada
+                          </>
+                        ) : (
+                          <>
+                            <Bookmark size={14} /> Guardar Receita
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <h2 style={{ margin: '0 0 10px 0', fontSize: '20px', color: '#f9fafb', lineHeight: '1.2' }}>{receita.nome}</h2>
+                    <div style={{ display: 'flex', gap: '15px', fontSize: '13px', color: '#9ca3af' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>⏱ {receita.tempo}</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>💰 {Number(receita.custoDaReceita || 0).toFixed(2)}€</span>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: '16px' }}>
+                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '15px', color: '#f3f4f6', margin: '0 0 12px 0' }}>
+                      <ShoppingCart size={16} color="#fbbf24" /> Ingredientes
+                    </h3>
+                    <ul style={{ listStyle: 'none', padding: '0', margin: '0 0 20px 0' }}>
+                      {receita.ingredientes.map((ing: any, idx: number) => {
+                        const idUnico = `rec${indexReceita}_ing${idx}`;
+                        const comprado = ingredientesComprados[idUnico];
+                        return (
+                          <li key={idx} onClick={() => toggleIngrediente(indexReceita, idx)}
+                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #374151', cursor: 'pointer' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: comprado ? '#6b7280' : '#d1d5db', textDecoration: comprado ? 'line-through' : 'none' }}>
+                              <div style={{ width: '22px', height: '22px', borderRadius: '6px', border: comprado ? 'none' : '2px solid #4b5563', backgroundColor: comprado ? '#10b981' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', flexShrink: 0 }}>
+                                {comprado && <Check size={14} />}
+                              </div>
+                              <span style={{ fontSize: '14px', lineHeight: '1.3' }}>{ing.item}</span>
                             </div>
-                            <span style={{ fontSize: '14px', lineHeight: '1.3' }}>{ing.item}</span>
-                          </div>
-                          <span style={{ fontSize: '13px', fontWeight: '600', color: comprado ? '#6b7280' : '#d1d5db' }}>{Number(ing.precoEstimado || 0).toFixed(2)}€</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                            <span style={{ fontSize: '13px', fontWeight: '600', color: comprado ? '#6b7280' : '#d1d5db' }}>{Number(ing.precoEstimado || 0).toFixed(2)}€</span>
+                          </li>
+                        );
+                      })}
+                    </ul>
 
-                  <h3 style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '15px', color: '#f3f4f6', margin: '0 0 12px 0' }}>
-                    <Utensils size={16} color="#fbbf24" /> Preparação
-                  </h3>
-                  <ol style={{ paddingLeft: '18px', margin: '0', lineHeight: '1.6', color: '#d1d5db', fontSize: '14px' }}>
-                    {receita.passos.map((passo: string, idx: number) => (
-                      <li key={idx} style={{ marginBottom: '10px' }}>{passo}</li>
-                    ))}
-                  </ol>
+                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '15px', color: '#f3f4f6', margin: '0 0 12px 0' }}>
+                      <Utensils size={16} color="#fbbf24" /> Preparação
+                    </h3>
+                    <ol style={{ paddingLeft: '18px', margin: '0', lineHeight: '1.6', color: '#d1d5db', fontSize: '14px' }}>
+                      {receita.passos.map((passo: string, idx: number) => (
+                        <li key={idx} style={{ marginBottom: '10px' }}>{passo}</li>
+                      ))}
+                    </ol>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
