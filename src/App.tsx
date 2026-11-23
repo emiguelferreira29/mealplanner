@@ -71,22 +71,33 @@ export default function App() {
   const [adminErro, setAdminErro] = useState('');
   const [aCriarUtilizador, setACriarUtilizador] = useState(false);
 
-  // Estados para Imagens Geradas por IA
   const [imagensGeradas, setImagensGeradas] = useState<Record<string, string>>({});
   const [aGerarImagem, setAGerarImagem] = useState<Record<string, boolean>>({});
 
-  // 📱 TRUQUE DO BOTÃO DE RETROCEDER DO TELEMÓVEL
+  // 1. INICIALIZA O HISTÓRICO QUANDO A APP ABRE
   useEffect(() => {
-    const handlePopState = () => {
-      if (plano) {
-        // Se a pessoa clicou no botão voltar do telemóvel e havia uma receita aberta, fechamos apenas a receita
-        setPlano(null);
-        setPlanoGuardadoAtivoId(null);
+    if (!window.history.state) {
+      window.history.replaceState({ tab: 'hoje', plano: false }, '');
+    }
+  }, []);
+
+  // 2. ESCUTA O BOTÃO FÍSICO DE "RETROCEDER" DO TELEMÓVEL OU PC
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const state = event.state;
+      if (state) {
+        // Volta para a aba correta
+        setActiveTab(state.tab);
+        // Se o estado anterior não tinha receita aberta, fecha-a no ecrã
+        if (!state.plano) {
+          setPlano(null);
+          setPlanoGuardadoAtivoId(null);
+        }
       }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [plano]);
+  }, []);
 
   useEffect(() => {
     const guardados = localStorage.getItem('app_jantar_config_mobile');
@@ -154,6 +165,7 @@ export default function App() {
       setUtilizador(data.user);
       setLoginUsername('');
       setLoginPassword('');
+      window.history.replaceState({ tab: 'hoje', plano: false }, '');
     } catch (err: any) {
       setLoginErro(err.message || 'Erro ao iniciar sessão.');
     } finally {
@@ -172,6 +184,7 @@ export default function App() {
     setReceitasGuardadasMap({});
     setImagensGeradas({});
     setActiveTab('hoje');
+    window.history.replaceState({ tab: 'hoje', plano: false }, '');
   };
 
   const carregarReceitasNuvem = async (customToken?: string) => {
@@ -215,12 +228,17 @@ export default function App() {
     localStorage.setItem('app_jantar_config_mobile', JSON.stringify(dadosAtuais));
   };
 
+  // 3. GRAVA NO HISTÓRICO SEMPRE QUE MUDAS DE ABA (EX: Hoje -> Guardadas)
   const mudarTab = (tabId: string) => {
+    if (activeTab === tabId && !plano) return;
     setActiveTab(tabId);
     setPlano(null);
     setPlanoGuardadoAtivoId(null);
     setReceitasGuardadasMap({});
     setErro('');
+    
+    window.history.pushState({ tab: tabId, plano: false }, '');
+
     if (tabId === 'guardadas') carregarReceitasNuvem();
     else if (tabId === 'admin') carregarUtilizadores();
   };
@@ -262,9 +280,8 @@ export default function App() {
       `;
       const data = await apiFetch('/api/generate', { method: 'POST', body: JSON.stringify({ prompt }) });
       
-      // Criar o marcador no histórico para o telemóvel saber que abriu uma "página nova"
-      window.history.pushState({ view: 'receita' }, '');
-      
+      // 4. GRAVA NO HISTÓRICO QUE ABRISTE UMA RECEITA NOVA
+      window.history.pushState({ tab: activeTab, plano: true }, '');
       setPlano(data.plano);
     } catch (err: any) { setErro(`Erro: ${err.message}`); } finally { setACarregar(false); }
   };
@@ -287,8 +304,8 @@ export default function App() {
   };
 
   const abrirReceitaGuardada = (item: PlanoGuardado) => {
-    // Criar o marcador no histórico do telemóvel
-    window.history.pushState({ view: 'receita' }, '');
+    // 5. GRAVA NO HISTÓRICO QUE ABRISTE UMA RECEITA GUARDADA
+    window.history.pushState({ tab: 'guardadas', plano: true }, '');
     
     setPlano(item.plano); setIngredientesComprados(item.ingredientesComprados || {});
     setPlanoGuardadoAtivoId(item.id); setReceitasGuardadasMap({}); setErro('');
@@ -296,7 +313,10 @@ export default function App() {
 
   const apagarReceitaGuardada = async (id: string) => {
     const backup = [...planosGuardados]; setPlanosGuardados((prev) => prev.filter((item) => item.id !== id));
-    if (planoGuardadoAtivoId === id) { setPlano(null); setPlanoGuardadoAtivoId(null); }
+    if (planoGuardadoAtivoId === id) { 
+      // Se apagar a que está aberta, volta à lista automaticamente
+      window.history.back(); 
+    }
     try { await apiFetch(`/api/recipes/${id}`, { method: 'DELETE' }); } catch (err: any) { setPlanosGuardados(backup); setErro(`Erro a apagar: ${err.message}`); }
   };
 
@@ -566,7 +586,7 @@ export default function App() {
             
             {activeTab === 'guardadas' && (
               <div>
-                {/* 📱 O BOTÃO DA INTERFACE AGORA USA O HISTÓRICO DO SISTEMA */}
+                {/* 6. O BOTÃO DA APP AGORA TAMBÉM USA O HISTÓRICO PARA VOLTAR ATRÁS */}
                 <button onClick={() => window.history.back()} style={{ padding: '10px 16px', borderRadius: '12px', border: '1px solid #4b5563', backgroundColor: '#1f2937', color: '#f9fafb', fontSize: '14px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                   <ArrowLeft size={18} /> Voltar às guardadas
                 </button>
@@ -642,7 +662,6 @@ export default function App() {
                       })}
                     </ul>
 
-                    {/* Botão de Envio para WhatsApp */}
                     <button onClick={() => partilharListaWhatsApp(receita, indexReceita)} style={{ width: '100%', marginBottom: '24px', padding: '12px', borderRadius: '12px', border: '1px solid #166534', backgroundColor: '#14532d', color: '#4ade80', fontSize: '14px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', transition: 'all 0.2s' }}>
                       <MessageCircle size={18} /> Enviar p/ WhatsApp o que falta
                     </button>
