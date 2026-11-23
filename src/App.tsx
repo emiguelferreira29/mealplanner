@@ -70,6 +70,32 @@ export default function App() {
     setIngredientesComprados({});
 
     try {
+      // 1. Descobrir automaticamente qual modelo de texto está ativo na conta Groq
+      const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: { 'Authorization': `Bearer ${apiKey}` }
+      });
+
+      if (!modelsRes.ok) {
+        const errData = await modelsRes.json().catch(() => ({}));
+        throw new Error(errData.error?.message || `Erro ao ligar à Groq (${modelsRes.status})`);
+      }
+
+      const modelsData = await modelsRes.json();
+      const chatModels = (modelsData.data || []).filter((m: any) => {
+        const id = (m.id || '').toLowerCase();
+        return !id.includes('whisper') && !id.includes('guard') && !id.includes('tts') && !id.includes('embed');
+      });
+
+      if (chatModels.length === 0) {
+        throw new Error('Nenhum modelo de texto disponível nesta conta Groq.');
+      }
+
+      const modeloEscolhido =
+        chatModels.find((m: any) => m.id.includes('70b') || m.id.includes('versatile'))?.id ||
+        chatModels.find((m: any) => m.id.includes('llama') || m.id.includes('qwen'))?.id ||
+        chatModels[0].id;
+
+      // 2. Preparar o pedido das receitas
       let instrucoesRefeicao = "";
       let instrucoesOrcamento = "";
 
@@ -112,6 +138,7 @@ export default function App() {
         }
       `;
 
+      // 3. Gerar o plano com o modelo ativo encontrado
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -119,7 +146,7 @@ export default function App() {
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: modeloEscolhido,
           response_format: { type: 'json_object' },
           messages: [
             {
