@@ -144,7 +144,7 @@ export default function App() {
           <div style={{ display: 'inline-flex', padding: '10px', backgroundColor: '#374151', borderRadius: '50%', color: '#fbbf24', marginBottom: '8px' }}>
             <ChefHat size={28} />
           </div>
-          <h1 style={{ margin: '0', fontSize: '22px' }}>O Que Vai Ser o Jantar?</h1>
+          <h1 style={{ margin: '0', fontSize: '22px' }}>O que vai ser a Janta?</h1>
         </header>
 
         {/* Navegação Mobile (Grelha 2x2) */}
