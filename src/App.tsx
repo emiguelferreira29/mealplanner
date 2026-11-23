@@ -107,8 +107,12 @@ export default function App() {
     setIngredientesComprados({});
 
     try {
-      // 1. Descobrir automaticamente os modelos Gemini ativos na chave AQ.
-      let candidatosModelo = ['models/gemini-3.8-flash', 'models/gemini-2.5-flash'];
+      // 1. Listar e ordenar todos os modelos Gemini ativos por prioridade
+      let candidatosModelo = [
+        'models/gemini-2.5-flash',
+        'models/gemini-2.5-flash-lite',
+        'models/gemini-2.0-flash'
+      ];
 
       const modelsRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
         headers: { 'x-goog-api-key': apiKey }
@@ -133,15 +137,30 @@ export default function App() {
         });
 
         if (validModels.length > 0) {
-          const preferido =
-            validModels.find((m: any) => m.name.includes('3.8-flash')) ||
-            validModels.find((m: any) => m.name.includes('3.5-flash')) ||
-            validModels.find((m: any) => m.name.includes('2.5-flash') && !m.name.includes('lite') && !m.name.includes('preview')) ||
-            validModels.find((m: any) => m.name.includes('2.5-flash')) ||
-            validModels.find((m: any) => m.name.includes('flash')) ||
-            validModels[0];
+          const regrasPrioridade = [
+            (n: string) => n.includes('2.5-flash') && !n.includes('lite') && !n.includes('preview'),
+            (n: string) => n.includes('2.5-flash-lite'),
+            (n: string) => n.includes('2.5-flash'),
+            (n: string) => n.includes('2.0-flash'),
+            (n: string) => n.includes('flash'),
+            (n: string) => n.includes('pro')
+          ];
 
-          candidatosModelo = [preferido.name];
+          const ordenados: string[] = [];
+          for (const regra of regrasPrioridade) {
+            for (const m of validModels) {
+              if (regra(m.name) && !ordenados.includes(m.name)) {
+                ordenados.push(m.name);
+              }
+            }
+          }
+          for (const m of validModels) {
+            if (!ordenados.includes(m.name)) {
+              ordenados.push(m.name);
+            }
+          }
+
+          candidatosModelo = ordenados;
         }
       } else if (modelsRes.status === 401 || modelsRes.status === 403) {
         const errData = await modelsRes.json().catch(() => ({}));
@@ -192,7 +211,7 @@ export default function App() {
         }
       `;
 
-      // 3. Gerar o plano usando o modelo Gemini ativo
+      // 3. Tentar os modelos por ordem; se algum estiver sobrecarregado (503/429), passa ao próximo
       let data: any = null;
       let ultimoErro = '';
 
@@ -221,12 +240,14 @@ export default function App() {
         } else {
           const errorData = await response.json().catch(() => ({}));
           ultimoErro = errorData.error?.message || `Erro HTTP ${response.status}`;
-          if (response.status !== 404) break;
+          if (response.status === 400 || response.status === 401 || response.status === 403) {
+            break;
+          }
         }
       }
 
       if (!data) {
-        throw new Error(ultimoErro || 'Não foi possível contactar o modelo Gemini.');
+        throw new Error(ultimoErro || 'Todos os modelos Gemini estão temporariamente ocupados. Tenta novamente dentro de segundos.');
       }
 
       const conteudo = data.candidates?.[0]?.content?.parts?.[0]?.text;
