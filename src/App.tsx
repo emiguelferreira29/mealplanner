@@ -301,7 +301,7 @@ export default function App() {
 
   // Melhoria 1: Partilhar a Lista de Compras
   const partilharListaWhatsApp = (receita: any, indexReceita: number) => {
-    const ingredientesEmFalta = receita.ingredientes.filter((ing: any, idx: number) => {
+    const ingredientesEmFalta = receita.ingredientes.filter((_: any, idx: number) => {
       const idUnico = `rec${indexReceita}_ing${idx}`;
       return !ingredientesComprados[idUnico];
     });
