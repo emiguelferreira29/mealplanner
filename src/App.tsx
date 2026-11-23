@@ -93,10 +93,10 @@ export default function App() {
   };
 
   const gerarPlano = async () => {
-    const apiKey = import.meta.env.VITE_GROQ_API_KEY;
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY?.trim();
 
     if (!apiKey || apiKey.includes('cole_aqui')) {
-      setErro('Aviso: Chave API da Groq não detetada. Verifique o ficheiro .env ou o Vercel.');
+      setErro('Aviso: Chave API do Gemini não detetada. Verifique o ficheiro .env ou o Vercel.');
       return;
     }
 
@@ -107,30 +107,48 @@ export default function App() {
     setIngredientesComprados({});
 
     try {
-      const modelsRes = await fetch('https://api.groq.com/openai/v1/models', {
-        headers: { 'Authorization': `Bearer ${apiKey}` }
+      // 1. Descobrir automaticamente os modelos Gemini ativos na chave AQ.
+      let candidatosModelo = ['models/gemini-3.8-flash', 'models/gemini-2.5-flash'];
+
+      const modelsRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+        headers: { 'x-goog-api-key': apiKey }
       });
 
-      if (!modelsRes.ok) {
+      if (modelsRes.ok) {
+        const modelsData = await modelsRes.json();
+        const validModels = (modelsData.models || []).filter((m: any) => {
+          const name = (m.name || '').toLowerCase();
+          const methods = m.supportedGenerationMethods || [];
+          return (
+            methods.includes('generateContent') &&
+            name.includes('gemini') &&
+            !name.includes('embedding') &&
+            !name.includes('vision') &&
+            !name.includes('image') &&
+            !name.includes('tts') &&
+            !name.includes('audio') &&
+            !name.includes('robotics') &&
+            !name.includes('computer')
+          );
+        });
+
+        if (validModels.length > 0) {
+          const preferido =
+            validModels.find((m: any) => m.name.includes('3.8-flash')) ||
+            validModels.find((m: any) => m.name.includes('3.5-flash')) ||
+            validModels.find((m: any) => m.name.includes('2.5-flash') && !m.name.includes('lite') && !m.name.includes('preview')) ||
+            validModels.find((m: any) => m.name.includes('2.5-flash')) ||
+            validModels.find((m: any) => m.name.includes('flash')) ||
+            validModels[0];
+
+          candidatosModelo = [preferido.name];
+        }
+      } else if (modelsRes.status === 401 || modelsRes.status === 403) {
         const errData = await modelsRes.json().catch(() => ({}));
-        throw new Error(errData.error?.message || `Erro ao ligar à Groq (${modelsRes.status})`);
+        throw new Error(errData.error?.message || `Chave API rejeitada (${modelsRes.status}).`);
       }
 
-      const modelsData = await modelsRes.json();
-      const chatModels = (modelsData.data || []).filter((m: any) => {
-        const id = (m.id || '').toLowerCase();
-        return !id.includes('whisper') && !id.includes('guard') && !id.includes('tts') && !id.includes('embed');
-      });
-
-      if (chatModels.length === 0) {
-        throw new Error('Nenhum modelo de texto disponível nesta conta Groq.');
-      }
-
-      const modeloEscolhido =
-        chatModels.find((m: any) => m.id.includes('70b') || m.id.includes('versatile'))?.id ||
-        chatModels.find((m: any) => m.id.includes('llama') || m.id.includes('qwen'))?.id ||
-        chatModels[0].id;
-
+      // 2. Preparar o pedido das receitas
       let instrucoesRefeicao = "";
       let instrucoesOrcamento = "";
 
@@ -149,7 +167,8 @@ export default function App() {
       }
 
       const prompt = `
-        És um chef português. Cria ${instrucoesRefeicao}
+        És um chef de cozinha português prático e criativo. Responde sempre em português de Portugal.
+        Cria ${instrucoesRefeicao}
         - Para: ${pessoas} pessoas.
         - Regras de dinheiro: ${instrucoesOrcamento}
         - Eletrodomésticos: ${eletrodomesticos.join(', ')}.
@@ -173,36 +192,49 @@ export default function App() {
         }
       `;
 
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: modeloEscolhido,
-          response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: 'És um chef de cozinha português prático e criativo. Respondes sempre em português de Portugal e apenas em formato JSON.'
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          temperature: 0.7
-        })
-      });
+      // 3. Gerar o plano usando o modelo Gemini ativo
+      let data: any = null;
+      let ultimoErro = '';
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `Erro HTTP ${response.status}`);
+      for (const modeloPath of candidatosModelo) {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/${modeloPath}:generateContent`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                responseMimeType: 'application/json',
+                temperature: 0.7
+              }
+            })
+          }
+        );
+
+        if (response.ok) {
+          data = await response.json();
+          break;
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          ultimoErro = errorData.error?.message || `Erro HTTP ${response.status}`;
+          if (response.status !== 404) break;
+        }
       }
 
-      const data = await response.json();
-      const conteudo = data.choices[0].message.content;
+      if (!data) {
+        throw new Error(ultimoErro || 'Não foi possível contactar o modelo Gemini.');
+      }
+
+      const conteudo = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!conteudo) {
+        throw new Error('O Gemini devolveu uma resposta vazia. Tenta novamente.');
+      }
+
       const jsonLimpo = conteudo.replace(/```json/g, '').replace(/```/g, '').trim();
       setPlano(JSON.parse(jsonLimpo));
     } catch (err: any) {
@@ -259,7 +291,6 @@ export default function App() {
     const novosComprados = { ...ingredientesComprados, [idUnico]: !ingredientesComprados[idUnico] };
     setIngredientesComprados(novosComprados);
 
-    // Se a receita estiver guardada, atualiza imediatamente o estado dos ingredientes no armazenamento
     if (planoGuardadoAtivoId) {
       const listaAtualizada = planosGuardados.map(item =>
         item.id === planoGuardadoAtivoId
@@ -392,7 +423,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Área de Configuração (escondida quando estamos na aba Guardadas) */}
+        {/* Área de Configuração */}
         {activeTab !== 'guardadas' && (
           <div style={{ backgroundColor: '#1f2937', padding: '16px', borderRadius: '16px', marginBottom: '24px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.2)' }}>
             
@@ -456,11 +487,11 @@ export default function App() {
           </div>
         )}
 
-        {/* Resultados (Gerados agora ou abertos a partir das Guardadas) */}
+        {/* Resultados */}
         {plano && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             
-            {/* Barra de Ação: Voltar (se vier das guardadas) ou Guardar Receita */}
+            {/* Barra de Ação: Voltar ou Guardar Receita */}
             <div style={{ display: 'flex', gap: '8px' }}>
               {activeTab === 'guardadas' && (
                 <button
