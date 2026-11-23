@@ -73,7 +73,7 @@ export default function App() {
     setIngredientesComprados({});
 
     try {
-      const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
       
       let instrucoesRefeicao = "";
       let instrucoesOrcamento = "";
