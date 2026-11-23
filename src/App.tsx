@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 
 const API_BASE_URL = (
-  import.meta.env.VITE_API_URL || 'https://mealplanner-api.e-miguel-ferreira29.workers.dev'
+  import.meta.env.VITE_API_URL || 'https://mealplanner-backend.e-miguel-ferreira29.workers.dev'
 ).replace(/\/$/, '');
 
 const ELETRODOMESTICOS_LISTA = [
