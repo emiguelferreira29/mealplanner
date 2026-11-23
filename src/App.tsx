@@ -25,7 +25,6 @@ export default function App() {
   const [aCarregar, setACarregar] = useState(false);
   const [erro, setErro] = useState('');
 
-  // Carregar dados guardados no telemóvel/computador
   useEffect(() => {
     const guardados = localStorage.getItem('app_jantar_config_mobile');
     if (guardados) {
@@ -58,10 +57,10 @@ export default function App() {
   };
 
   const gerarPlano = async () => {
-    const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+    const apiKey = import.meta.env.VITE_GROQ_API_KEY;
 
     if (!apiKey || apiKey.includes('cole_aqui')) {
-      setErro('Aviso: Chave API da OpenAI não detetada. Verifique o ficheiro .env ou o Vercel.');
+      setErro('Aviso: Chave API da Groq não detetada. Verifique o ficheiro .env ou o Vercel.');
       return;
     }
 
@@ -113,14 +112,14 @@ export default function App() {
         }
       `;
 
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'llama-3.3-70b-versatile',
           response_format: { type: 'json_object' },
           messages: [
             {
