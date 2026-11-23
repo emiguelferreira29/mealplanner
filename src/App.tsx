@@ -75,6 +75,19 @@ export default function App() {
   const [imagensGeradas, setImagensGeradas] = useState<Record<string, string>>({});
   const [aGerarImagem, setAGerarImagem] = useState<Record<string, boolean>>({});
 
+  // 📱 TRUQUE DO BOTÃO DE RETROCEDER DO TELEMÓVEL
+  useEffect(() => {
+    const handlePopState = () => {
+      if (plano) {
+        // Se a pessoa clicou no botão voltar do telemóvel e havia uma receita aberta, fechamos apenas a receita
+        setPlano(null);
+        setPlanoGuardadoAtivoId(null);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [plano]);
+
   useEffect(() => {
     const guardados = localStorage.getItem('app_jantar_config_mobile');
     if (guardados) {
@@ -248,6 +261,10 @@ export default function App() {
         Responde APENAS JSON: {"mensagemChef": "...", "dicaSupermercado": "...", "custoTotalEstimado": 45.5, "receitas": [{"contextoDia": "...", "nome": "...", "tempo": "...", "custoDaReceita": 8.5, "ingredientes": [{"item": "...", "precoEstimado": 3.5}], "passos": ["..."]}]}
       `;
       const data = await apiFetch('/api/generate', { method: 'POST', body: JSON.stringify({ prompt }) });
+      
+      // Criar o marcador no histórico para o telemóvel saber que abriu uma "página nova"
+      window.history.pushState({ view: 'receita' }, '');
+      
       setPlano(data.plano);
     } catch (err: any) { setErro(`Erro: ${err.message}`); } finally { setACarregar(false); }
   };
@@ -270,6 +287,9 @@ export default function App() {
   };
 
   const abrirReceitaGuardada = (item: PlanoGuardado) => {
+    // Criar o marcador no histórico do telemóvel
+    window.history.pushState({ view: 'receita' }, '');
+    
     setPlano(item.plano); setIngredientesComprados(item.ingredientesComprados || {});
     setPlanoGuardadoAtivoId(item.id); setReceitasGuardadasMap({}); setErro('');
   };
@@ -299,7 +319,6 @@ export default function App() {
     }
   };
 
-  // Melhoria 1: Partilhar a Lista de Compras
   const partilharListaWhatsApp = (receita: any, indexReceita: number) => {
     const ingredientesEmFalta = receita.ingredientes.filter((_: any, idx: number) => {
       const idUnico = `rec${indexReceita}_ing${idx}`;
@@ -320,7 +339,6 @@ export default function App() {
     window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank');
   };
 
-  // Melhoria 2: Gerar Imagem do Prato com IA
   const gerarImagem = (nomePrato: string, indexReceita: number) => {
     const id = planoGuardadoAtivoId ? `${planoGuardadoAtivoId}_${indexReceita}` : `temp_${indexReceita}`;
     setAGerarImagem(prev => ({ ...prev, [id]: true }));
@@ -548,7 +566,8 @@ export default function App() {
             
             {activeTab === 'guardadas' && (
               <div>
-                <button onClick={() => { setPlano(null); setPlanoGuardadoAtivoId(null); }} style={{ padding: '10px 16px', borderRadius: '12px', border: '1px solid #4b5563', backgroundColor: '#1f2937', color: '#f9fafb', fontSize: '14px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                {/* 📱 O BOTÃO DA INTERFACE AGORA USA O HISTÓRICO DO SISTEMA */}
+                <button onClick={() => window.history.back()} style={{ padding: '10px 16px', borderRadius: '12px', border: '1px solid #4b5563', backgroundColor: '#1f2937', color: '#f9fafb', fontSize: '14px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                   <ArrowLeft size={18} /> Voltar às guardadas
                 </button>
               </div>
@@ -575,7 +594,7 @@ export default function App() {
               return (
                 <div key={indexReceita} style={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '20px', overflow: 'hidden', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.2)' }}>
                   
-                  {/* Zona da Imagem (Topo do Cartão) */}
+                  {/* Zona da Imagem */}
                   {imagemGerada && (
                     <div style={{ width: '100%', height: '240px', backgroundImage: `url(${imagemGerada})`, backgroundSize: 'cover', backgroundPosition: 'center', borderBottom: '1px solid #374151' }} />
                   )}
